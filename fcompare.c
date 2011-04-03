@@ -20,23 +20,17 @@ typedef struct HBNode {
   struct HBNode *next;
 } HBNode;
 
-// hash bucket linked list head node.
-typedef struct HBHeadNode {
-  short size; // ll size for comparisons
-  HBNode this;
-} HBHeadNode;
-
 // file line read buffer
 #define FREAD_BUFF_SIZE 100000
 char freadbuff[FREAD_BUFF_SIZE] = {}; 
 
 // bloom filter num buckets
-#define BLOOM_SIZE 1500000  // 2000000
+#define BLOOM_SIZE 1500000 // good for ~1M records
 char bloom_bits[BLOOM_SIZE / 8] = { 0 };
 
 // hash table num buckets
 #define HASH_SIZE BLOOM_SIZE / 5 
-HBHeadNode* hash_buckets[HASH_SIZE] = { 0 };
+HBNode* hash_buckets[HASH_SIZE] = { 0 };
 
 bool _debug  = false;
 
@@ -80,13 +74,13 @@ void print_bloom_bits() {
 
 // debug hash table buckets
 void print_hash_buckets() {
-  short i = 0;
+  uint i = 0;
   for(i = 0; (i < HASH_SIZE); i++) {
     printf("b: %d", i);
     if (hash_buckets[i]) {
-      HBNode* curr = &hash_buckets[i]->this;
+      HBNode* curr = hash_buckets[i];
       do {
-        printf(" %ld", curr->fpos);
+        printf(" %ld", (long) curr->fpos);
         curr = curr->next;
       }
       while(curr);
@@ -112,7 +106,7 @@ uint count_file_lines(FILE* fp) {
 }
 
 // add a new hash bucket node
-void insert_hbnode(HBHeadNode* head, HBNode* chain, HBNode* bbn) {
+void insert_hbnode(HBNode* chain, HBNode* bbn) {
   HBNode* curr = chain;
 
   while(curr->next && (bbn->fpos > curr->fpos)) {
@@ -125,8 +119,6 @@ void insert_hbnode(HBHeadNode* head, HBNode* chain, HBNode* bbn) {
   else {
     curr->next = bbn;
   }
-
-  head->size++;
 }
 
 // set 4 bloom bits identified by quad_hash indices
@@ -155,14 +147,14 @@ bool find_in_bloom_bits(uint* quad_hash) {
 
 // final step, memcmp (linelens match)
 bool compare_line_to_buff(
-  FILE*fp, fpos_t* new_fpos, 
+  FILE* fp, fpos_t* new_fpos, 
   short linelen, char* buff) {
 
   fpos_t curr_fpos;
   fgetpos(fp, &curr_fpos);
 
   // seek to file location of start of string
-  fseek(fp, new_fpos, SEEK_SET);
+  fseek(fp, (long) new_fpos - curr_fpos, SEEK_CUR);
 
   char filebuff[FREAD_BUFF_SIZE] = { 0 };
 
@@ -186,18 +178,18 @@ bool find_in_hash_table(
 
   rewind(fp);
   short i = 0;
-  uint bb_intersection = 0;
-  for(;(i < 4); i++) { bb_intersection |= quad_hash[i]; }
+  uint bb_dj = 0;
+  for(;(i < 4); i++) { bb_dj |= quad_hash[i]; }
 
   // run through hash bucket chain
   if (hash_buckets[ht_hash]) {
-    HBNode* curr = &hash_buckets[ht_hash]->this;
+    HBNode* curr = hash_buckets[ht_hash];
     do {
       // if both linelen and bloom intersection match, 
       //  only then attempt full string comparison
-      if ((curr->linelen == linelen) && (curr->bloomhash == bb_intersection)) {
+      if ((curr->linelen == linelen) && (curr->bloomhash == bb_dj)) {
         // highly probably match, full str compare from file
-        if (compare_line_to_buff(fp, curr->fpos, curr->linelen, buff)) {
+        if (compare_line_to_buff(fp, (fpos_t*)curr->fpos, curr->linelen, buff)) {
           // only if compare is true, otherwise test more bucket nodes
           return true;
         }
@@ -215,28 +207,23 @@ void hash_line_info(
 
   short i = 0;
   set_bloom_bits(quad_hash);
-  uint bb_intersection = 0;
+  uint bb_dj = 0;
 
-  for(;(i < 4); i++) { bb_intersection |= quad_hash[i]; }
+  for(;(i < 4); i++) { bb_dj |= quad_hash[i]; }
+
+  // create new head bucket node
+  HBNode *hbn =  (HBNode*)malloc(sizeof(HBNode));
+  memcpy(&hbn->fpos, fpos, sizeof(fpos_t));
+  hbn->linelen = linelen;
+  hbn->bloomhash = bb_dj;
+  hbn->next = NULL;
 
   if (hash_buckets[ht_hash]) {
     // append to hash bucket
-    HBNode *hbn =  (HBNode*)malloc(sizeof(HBNode));
-    memcpy(&hbn->fpos, fpos, sizeof(fpos_t));
-    hbn->linelen = linelen;
-    hbn->bloomhash = bb_intersection;
-    hbn->next = NULL;
-    insert_hbnode(hash_buckets[ht_hash], &hash_buckets[ht_hash]->this, hbn);
+    insert_hbnode(hash_buckets[ht_hash], hbn);
   }
   else {
-    // create new head bucket node
-    HBHeadNode* hbh = hash_buckets[ht_hash] = (HBHeadNode*)malloc(sizeof(HBHeadNode));
-    hbh->size = 1;
-    memcpy(&hbh->this.fpos, fpos, sizeof(fpos_t));
-    hbh->this.linelen = linelen;
-    hbh->this.bloomhash = bb_intersection;
-    hbh->this.next = NULL;
-    hash_buckets[ht_hash] = hbh;
+    hash_buckets[ht_hash] = hbn;
   }
   return;
 }
