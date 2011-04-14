@@ -6,14 +6,18 @@
 
 int main(int argc, char *argv[]) {
 
-  if (argc < 3) {
-    printf("usage: fcompare filename1 filename2\n");
+  if (argc < 5) {
+    printf("usage: fcompare file1 file2 hsh_buckets bloom_bits bloom_hashes\n");
     return 0;
   }
 
   open_files(argv[1], argv[2]);
 
-  zhsh_init(fp1, 1000000, 10000000, 1);
+  uint _in_hash_buckets = atoi(argv[3]);
+  uint _in_bloom_bits = atoi(argv[4]);
+  short _in_bloom_hashes = atoi(argv[5]);
+
+  zhsh_init(fp1, _in_hash_buckets, _in_bloom_bits, _in_bloom_hashes);
 
   fpos_t fpos;
   short linelen = 0;
